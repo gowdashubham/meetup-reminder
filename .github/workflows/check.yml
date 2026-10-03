@@ -1,0 +1,64 @@
+name: Check Meetup soccer
+
+on:
+  schedule:
+    # Hourly. This only keeps the reminder schedule up to date; the reminders
+    # themselves are delivered by ntfy at the exact second, not by this run.
+    - cron: "17 * * * *"
+  workflow_dispatch:
+    inputs:
+      test_notify:
+        description: "Send a test push to my phone"
+        type: boolean
+        default: true
+
+concurrency:
+  group: meetup-checker
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Restore what was seen last time
+        uses: actions/cache/restore@v4
+        with:
+          path: .state
+          key: meetup-state-${{ github.run_id }}
+          restore-keys: meetup-state-
+
+      - name: Check Meetup
+        env:
+          MEETUP_GROUP_URL: ${{ vars.MEETUP_GROUP_URL || 'https://www.meetup.com/diamond-bar-hacienda-heights-pick-up-soccer-meetup-group/' }}
+          TITLE_FILTER: ${{ vars.TITLE_FILTER }}
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+          TEST_NOTIFY: ${{ inputs.test_notify || 'false' }}
+        run: python check_meetup.py
+
+      - name: Save what was seen
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: .state
+          key: meetup-state-${{ github.run_id }}
+
+      - name: Tell me if the checker breaks
+        if: failure()
+        env:
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          curl -s \
+            -H "Title: Meetup checker failed" \
+            -H "Priority: low" \
+            -H "Tags: warning" \
+            -H "Click: $RUN_URL" \
+            -d "The Meetup check hit an error. Tap to see the log." \
+            "https://ntfy.sh/$NTFY_TOPIC"
